@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>EEG Image — карта электродов</title>
+  <style>
+    :root {
+      --bg: #f2f7f8;
+      --surface: #fbfefe;
+      --surface-muted: #f2f7f8;
+      --border: #cfdddf;
+      --border-strong: #b9cbce;
+      --text: #203235;
+      --text-muted: #64777a;
+      --accent: #28727a;
+      --accent-hover: #205f66;
+      --accent-soft: #e2f0f1;
+      --success: #277153;
+      --success-soft: #eaf6f0;
+      --danger: #a84b48;
+      --danger-soft: #faeeee;
+      --focus: #82b7bb;
+      --control-radius: 2px;
+      --map-bg: #f9fcfc;
+      --map-grid: #e1eaeb;
+      --map-ink: #294246;
+      --map-point-fill: #fbfefe;
+      --map-selected-fill: #d7edef;
+      --map-selected-stroke: #28727a;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        Helvetica, Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      min-width: 1040px;
+      min-height: 680px;
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+      min-height: 100vh;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    button,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      color: inherit;
+    }
+
+    .app-shell {
+      width: 1040px;
+      height: 680px;
+      overflow: hidden;
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      color: var(--text);
+      transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
+      gap: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .panel {
+      min-width: 0;
+      overflow: hidden;
+      background: var(--surface);
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
+    }
+
+    .map-panel {
+      display: grid;
+      grid-template-rows: minmax(0, 1fr);
+      min-height: 0;
+    }
+
+    .section-title {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .map-stage {
+      position: relative;
+      display: grid;
+      place-items: center;
+      min-height: 0;
+      overflow: hidden;
+      background-color: var(--map-bg);
+      background-image:
+        linear-gradient(var(--map-grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--map-grid) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+
+    .orientation-label {
+      position: absolute;
+      z-index: 2;
+      color: var(--text-muted);
+      font-size: 10px;
+      font-weight: 650;
+      letter-spacing: .08em;
+      user-select: none;
+    }
+
+    .orientation-label.left { left: 13px; top: 50%; transform: translateY(-50%); }
+    .orientation-label.right { right: 13px; top: 50%; transform: translateY(-50%); }
+
+    .map-viewport {
+      width: 610px;
+      height: 548px;
+    }
+
+    .brain-map {
+      display: block;
+      width: 100%;
+      height: 100%;
+      border: 0;
+    }
+
+    .side-panel {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      border-left: 1px solid var(--border-strong);
+    }
+
+    .side-content {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      min-height: 0;
+      padding: 16px;
+    }
+
+    .field-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 7px;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .field-hint {
+      color: var(--text-muted);
+      font-size: 10px;
+      font-weight: 400;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 106px;
+      resize: vertical;
+      padding: 10px 11px;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--control-radius);
+      outline: none;
+      background: var(--surface);
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      font-size: 13px;
+      line-height: 1.65;
+    }
+
+    textarea::placeholder {
+      color: #9ca4ad;
+    }
+
+    textarea:focus {
+      border-color: var(--focus);
+      box-shadow: 0 0 0 3px rgb(138 181 211 / 18%);
+    }
+
+    textarea[aria-invalid="true"] {
+      border-color: var(--danger);
+    }
+
+    .form-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .button {
+      min-height: 34px;
+      padding: 0 14px;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--control-radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .button:hover {
+      background: var(--surface-muted);
+    }
+
+    .button-primary {
+      flex: 1;
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .button-primary:hover {
+      background: var(--accent-hover);
+    }
+
+    button:focus-visible,
+    textarea:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+
+    .selection-summary {
+      margin-top: 18px;
+      padding-top: 15px;
+      border-top: 1px solid var(--border);
+    }
+
+    .section-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .count-badge {
+      min-width: 22px;
+      padding: 2px 6px;
+      border-radius: var(--control-radius);
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 10px;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .chip-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      min-height: 24px;
+    }
+
+    .chip {
+      padding: 3px 7px;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--control-radius);
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 11px;
+    }
+
+    .chip-empty {
+      color: var(--text-muted);
+      font-size: 11px;
+    }
+
+    .error-section {
+      margin-top: auto;
+      padding-top: 14px;
+    }
+
+    .error-output {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 36px;
+      max-height: 54px;
+      padding: 8px 10px;
+      overflow: auto;
+      border: 1px solid var(--success);
+      border-radius: var(--control-radius);
+      background: var(--success-soft);
+      color: var(--success);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .error-output::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .error-output.has-error {
+      border-color: var(--danger);
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <main class="workspace">
+      <section class="panel map-panel" aria-label="Карта электродов">
+        <div class="map-stage">
+          <span class="orientation-label right">R</span>
+          <span class="orientation-label left">L</span>
+          <div class="map-viewport" id="mapViewport">
+            <object
+              class="brain-map"
+              id="brainMap"
+              data="images/map.svg"
+              type="image/svg+xml"
+              aria-label="Схема расположения электродов на голове">
+              <img src="images/map.svg" alt="Схема расположения электродов на голове">
+            </object>
+          </div>
+        </div>
+      </section>
+
+      <aside class="panel side-panel" aria-label="Параметры карты">
+        <div class="side-content">
+          <form id="electrodeForm" novalidate>
+            <label class="field-label" for="electrodeInput">
+              <span>Список электродов</span>
+              <span class="field-hint">через пробел или запятую</span>
+            </label>
+            <textarea
+              id="electrodeInput"
+              name="electrodes"
+              spellcheck="false"
+              aria-invalid="false"
+              placeholder="Например: C1 Cz C2 FCZ CPZ">C1 Cz C2 FCZ CPZ</textarea>
+            <div class="form-actions">
+              <button class="button" id="clearButton" type="button">Очистить</button>
+              <button class="button button-primary" id="saveButton" type="button">Сохранить результат</button>
+            </div>
+          </form>
+
+          <section class="selection-summary" aria-labelledby="selection-title">
+            <div class="section-heading">
+              <h3 class="section-title" id="selection-title">Выбранные точки</h3>
+              <span class="count-badge" id="selectionCount">5</span>
+            </div>
+            <div class="chip-list" id="chipList" aria-live="polite"></div>
+          </section>
+
+          <section class="error-section" aria-label="Статус обработки">
+            <div class="error-output" id="errorOutput" role="status" aria-live="polite">Ошибок нет · карта готова к построению</div>
+          </section>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <script>
+    const electrodeNames = [
+      "A1", "A2", "AF3", "AF4", "AF7", "AF8", "AFZ", "C1", "C2", "C3",
+      "C4", "C5", "C6", "CP1", "CP2", "CP3", "CP4", "CP5", "CP6", "CPZ",
+      "Cz", "F1", "F10", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9",
+      "FC1", "FC2", "FC3", "FC4", "FC5", "FC6", "FCZ", "FT10", "FT7", "FT8",
+      "FT9", "Fp1", "Fp2", "FpZ", "Fz", "IZ", "O1", "O2", "OZ", "P1", "P10",
+      "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "PO3", "PO4", "PO7",
+      "PO8", "POZ", "Pz", "T10", "T7", "T8", "T9", "TP10", "TP7", "TP8", "TP9"
+    ];
+
+    const canonicalNames = new Map(electrodeNames.map((name) => [name.toLowerCase(), name]));
+    const appShell = document.querySelector(".app-shell");
+    const input = document.querySelector("#electrodeInput");
+    const errorOutput = document.querySelector("#errorOutput");
+    const chipList = document.querySelector("#chipList");
+    const selectionCount = document.querySelector("#selectionCount");
+    const brainMap = document.querySelector("#brainMap");
+    let lastSelection = ["C1", "Cz", "C2", "FCZ", "CPZ"];
+
+    function parseElectrodes(value) {
+      const tokens = value.split(/[\s,;]+/).map((item) => item.trim()).filter(Boolean);
+      const selected = [];
+      const invalid = [];
+
+      tokens.forEach((token) => {
+        const canonical = canonicalNames.get(token.toLowerCase());
+        if (!canonical) {
+          invalid.push(token);
+        } else if (!selected.includes(canonical)) {
+          selected.push(canonical);
+        }
+      });
+
+      return { selected, invalid };
+    }
+
+    function renderChips(selected) {
+      chipList.replaceChildren();
+      if (!selected.length) {
+        const empty = document.createElement("span");
+        empty.className = "chip-empty";
+        empty.textContent = "Точки не выбраны";
+        chipList.append(empty);
+      } else {
+        selected.forEach((name) => {
+          const chip = document.createElement("span");
+          chip.className = "chip";
+          chip.textContent = name;
+          chipList.append(chip);
+        });
+      }
+
+      selectionCount.textContent = String(selected.length);
+    }
+
+    function highlightMap(selected) {
+      const svgDocument = brainMap.contentDocument;
+      if (!svgDocument) return;
+
+      const theme = getComputedStyle(appShell);
+      const mapBackground = theme.getPropertyValue("--map-bg").trim();
+      const mapInk = theme.getPropertyValue("--map-ink").trim();
+      const pointFill = theme.getPropertyValue("--map-point-fill").trim();
+      const selectedFill = theme.getPropertyValue("--map-selected-fill").trim();
+      const selectedStroke = theme.getPropertyValue("--map-selected-stroke").trim();
+      const selectedSet = new Set(selected);
+
+      svgDocument.documentElement.style.backgroundColor = mapBackground;
+      svgDocument.querySelectorAll("line, ellipse, path").forEach((element) => {
+        element.style.stroke = mapInk;
+      });
+      svgDocument.querySelectorAll("text").forEach((element) => {
+        element.style.fill = mapInk;
+      });
+
+      svgDocument.querySelectorAll("g").forEach((group) => {
+        const labelNode = group.querySelector("tspan");
+        if (!labelNode) return;
+
+        const name = labelNode.textContent.trim();
+        if (["NASION", "INION"].includes(name.toUpperCase())) {
+          group.style.display = "none";
+          return;
+        }
+        if (!canonicalNames.has(name.toLowerCase())) return;
+
+        const circles = group.querySelectorAll("circle");
+        const textNode = group.querySelector("text");
+        const isSelected = selectedSet.has(canonicalNames.get(name.toLowerCase()));
+
+        circles.forEach((circle, index) => {
+          circle.style.fill = index === 0 && isSelected ? selectedFill : (index === 0 ? pointFill : "none");
+          circle.style.stroke = isSelected ? selectedStroke : mapInk;
+          circle.style.strokeWidth = isSelected ? "2.4" : "1.6";
+        });
+
+        if (textNode) {
+          textNode.style.fill = isSelected ? selectedStroke : mapInk;
+          textNode.style.fontWeight = isSelected ? "700" : "400";
+        }
+      });
+    }
+
+    function applySelection() {
+      const { selected, invalid } = parseElectrodes(input.value);
+      lastSelection = selected;
+      input.setAttribute("aria-invalid", invalid.length ? "true" : "false");
+      renderChips(selected);
+      highlightMap(selected);
+
+      if (invalid.length) {
+        errorOutput.classList.add("has-error");
+        errorOutput.textContent = `Неизвестные обозначения: ${invalid.join(", ")} · проверьте ввод`;
+      } else {
+        errorOutput.classList.remove("has-error");
+        errorOutput.textContent = selected.length
+          ? `Ошибок нет · распознано электродов: ${selected.length}`
+          : "Ошибок нет · список электродов пуст";
+      }
+
+      return { selected, invalid };
+    }
+
+    function saveResult() {
+      const { selected, invalid } = applySelection();
+      if (invalid.length) return;
+
+      const svgDocument = brainMap.contentDocument;
+      if (!svgDocument?.documentElement) {
+        errorOutput.classList.add("has-error");
+        errorOutput.textContent = "Не удалось подготовить файл · дождитесь загрузки карты";
+        return;
+      }
+
+      const svg = svgDocument.documentElement.cloneNode(true);
+      svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+      const serialized = `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(svg)}`;
+      const file = new Blob([serialized], { type: "image/svg+xml;charset=utf-8" });
+      const url = URL.createObjectURL(file);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "eeg-electrode-map.svg";
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+
+      errorOutput.classList.remove("has-error");
+      errorOutput.textContent = `Результат сохранён · электродов: ${selected.length}`;
+    }
+
+    input.addEventListener("input", applySelection);
+
+    document.querySelector("#clearButton").addEventListener("click", () => {
+      input.value = "";
+      applySelection();
+      input.focus();
+    });
+
+    document.querySelector("#saveButton").addEventListener("click", saveResult);
+
+    brainMap.addEventListener("load", () => highlightMap(lastSelection));
+    renderChips(lastSelection);
+  </script>
+</body>
+</html>

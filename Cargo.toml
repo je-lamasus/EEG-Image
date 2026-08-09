@@ -1,7 +1,18 @@
 [package]
 name = "eeg-image"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [dependencies]
-iced = "0.14.0"
+iced = { version = "0.14.0", features = ["svg", "canvas", "tokio"] }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+resvg = "0.48"
+rfd = "0.17"
+xmltree = { version = "0.12.0", features = ["attribute-order"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+incremental = false
