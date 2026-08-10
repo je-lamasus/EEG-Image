@@ -118,8 +118,8 @@ jobs:
       - name: Upload release archive
         uses: actions/upload-artifact@v7
         with:
-          name: release-${{ matrix.platform }}
-          path: dist/*
+          path: dist/eeg-image-${{ env.APP_VERSION }}-${{ matrix.platform }}.tar.gz
+          archive: false
           if-no-files-found: error
           retention-days: 7
 
@@ -167,8 +167,8 @@ jobs:
       - name: Upload release archive
         uses: actions/upload-artifact@v7
         with:
-          name: release-${{ matrix.platform }}
-          path: dist/*
+          path: dist/eeg-image-${{ env.APP_VERSION }}-${{ matrix.platform }}.zip
+          archive: false
           if-no-files-found: error
           retention-days: 7
 
@@ -199,18 +199,147 @@ jobs:
       - name: Build release binary
         run: cargo +1.94.1 build --locked --release --target "$RUST_TARGET"
 
-      - name: Package binary
+      - name: Create application bundle
         run: |
-          mkdir -p dist
-          tar -C "target/$RUST_TARGET/release" \
-            -czf "dist/eeg-image-${APP_VERSION}-${PLATFORM_NAME}.tar.gz" \
-            eeg-image
+          app_bundle="dist/EEG Image.app"
+          mkdir -p "$app_bundle/Contents/MacOS"
+          mkdir -p "$app_bundle/Contents/Resources"
+          cp "target/$RUST_TARGET/release/eeg-image" \
+            "$app_bundle/Contents/MacOS/eeg-image"
+          cp packaging/macos/Info.plist "$app_bundle/Contents/Info.plist"
+          cp packaging/icons/app-icon.icns \
+            "$app_bundle/Contents/Resources/AppIcon.icns"
+          chmod 755 "$app_bundle/Contents/MacOS/eeg-image"
+
+          /usr/libexec/PlistBuddy \
+            -c "Set :CFBundleShortVersionString $APP_VERSION" \
+            "$app_bundle/Contents/Info.plist"
+          /usr/libexec/PlistBuddy \
+            -c "Set :CFBundleVersion $APP_VERSION" \
+            "$app_bundle/Contents/Info.plist"
+
+      - name: Check macOS signing configuration
+        id: macos_signing
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          required=(
+            APPLE_CERTIFICATE_BASE64
+            APPLE_CERTIFICATE_PASSWORD
+            APPLE_ID
+            APPLE_TEAM_ID
+            APPLE_APP_SPECIFIC_PASSWORD
+          )
+          configured=0
+
+          for variable in "${required[@]}"; do
+            if [[ -n "${!variable}" ]]; then
+              configured=$((configured + 1))
+            fi
+          done
+
+          if [[ "$configured" -eq 0 ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::macOS signing secrets are not configured; publishing an unsigned app"
+          elif [[ "$configured" -ne "${#required[@]}" ]]; then
+            echo "::error::macOS signing is only partially configured; check all required secrets"
+            exit 1
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Import Developer ID certificate
+        if: steps.macos_signing.outputs.enabled == 'true'
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          certificate_path="$RUNNER_TEMP/developer-id.p12"
+          keychain_path="$RUNNER_TEMP/eeg-image-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+
+          printf '%s' "$APPLE_CERTIFICATE_BASE64" | /usr/bin/base64 -D > "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" \
+            -k "$keychain_path" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain_path"
+
+          signing_identity="$(
+            security find-identity -v -p codesigning "$keychain_path" |
+              awk -F '"' '/Developer ID Application/ { print $2; exit }'
+          )"
+          if [[ -z "$signing_identity" ]]; then
+            echo "::error::Developer ID Application identity was not found in the certificate"
+            exit 1
+          fi
+
+          echo "MACOS_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
+          echo "MACOS_SIGNING_IDENTITY=$signing_identity" >> "$GITHUB_ENV"
+
+      - name: Sign and notarize application
+        if: steps.macos_signing.outputs.enabled == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          app_bundle="dist/EEG Image.app"
+          notarization_archive="$RUNNER_TEMP/eeg-image-notarization.zip"
+
+          codesign \
+            --force \
+            --options runtime \
+            --timestamp \
+            --keychain "$MACOS_KEYCHAIN_PATH" \
+            --sign "$MACOS_SIGNING_IDENTITY" \
+            "$app_bundle"
+          codesign --verify --deep --strict --verbose=2 "$app_bundle"
+
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$app_bundle" "$notarization_archive"
+          xcrun notarytool submit "$notarization_archive" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+          xcrun stapler staple "$app_bundle"
+          xcrun stapler validate "$app_bundle"
+          spctl --assess --type execute --verbose=2 "$app_bundle"
+
+      - name: Package application
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            "dist/EEG Image.app" \
+            "dist/eeg-image-${APP_VERSION}-${PLATFORM_NAME}.zip"
+
+      - name: Remove temporary signing files
+        if: always() && steps.macos_signing.outputs.enabled == 'true'
+        run: |
+          rm -f "$RUNNER_TEMP/developer-id.p12"
+          rm -f "$RUNNER_TEMP/eeg-image-notarization.zip"
+          if [[ -n "${MACOS_KEYCHAIN_PATH:-}" ]]; then
+            security delete-keychain "$MACOS_KEYCHAIN_PATH" || true
+          fi
 
       - name: Upload release archive
         uses: actions/upload-artifact@v7
         with:
-          name: release-macos-aarch64
-          path: dist/*
+          path: dist/eeg-image-${{ env.APP_VERSION }}-macos-aarch64.zip
+          archive: false
           if-no-files-found: error
           retention-days: 7
 
@@ -230,11 +359,12 @@ jobs:
       GH_REPO: ${{ github.repository }}
     steps:
       - name: Download release archives
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
-          pattern: release-*
+          pattern: eeg-image-*
           path: dist
           merge-multiple: true
+          skip-decompress: true
 
       - name: Publish release
         run: |
