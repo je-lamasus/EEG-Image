@@ -106,7 +106,7 @@ def main() -> None:
     parser.add_argument(
         "--dotenv",
         type=Path,
-        help="write APP_VERSION to a GitLab dotenv artifact",
+        help="write APP_VERSION to a CI-compatible dotenv file",
     )
     args = parser.parse_args()
 

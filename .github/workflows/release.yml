@@ -1,0 +1,252 @@
+name: Build and release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version_check:
+    name: Check version
+    runs-on: ubuntu-24.04
+    outputs:
+      app_version: ${{ steps.version.outputs.APP_VERSION }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require a version bump
+        id: version
+        env:
+          PREVIOUS_REF: ${{ github.event.before }}
+        run: |
+          python3 scripts/check_version.py \
+            --previous-ref "$PREVIOUS_REF" \
+            --dotenv version.env
+          cat version.env >> "$GITHUB_OUTPUT"
+
+  quality:
+    name: Format, test and lint
+    runs-on: ubuntu-24.04
+    needs: version_check
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            pkg-config libx11-dev libx11-xcb-dev libxcursor-dev libxi-dev \
+            libxrandr-dev libwayland-dev libxkbcommon-dev
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install 1.94.1 \
+            --profile minimal \
+            --component clippy \
+            --component rustfmt
+
+      - name: Check formatting
+        run: cargo +1.94.1 fmt --all -- --check
+
+      - name: Run tests
+        run: cargo +1.94.1 test --locked
+
+      - name: Run Clippy
+        run: cargo +1.94.1 clippy --locked --all-targets -- -D warnings
+
+  build_linux:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    needs:
+      - version_check
+      - quality
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+          - runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: linux-aarch64
+    env:
+      APP_VERSION: ${{ needs.version_check.outputs.app_version }}
+      RUST_TARGET: ${{ matrix.target }}
+      PLATFORM_NAME: ${{ matrix.platform }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            pkg-config libx11-dev libx11-xcb-dev libxcursor-dev libxi-dev \
+            libxrandr-dev libwayland-dev libxkbcommon-dev
+
+      - name: Install Rust target
+        run: |
+          rustup toolchain install 1.94.1 --profile minimal
+          rustup target add "$RUST_TARGET" --toolchain 1.94.1
+
+      - name: Build release binary
+        run: cargo +1.94.1 build --locked --release --target "$RUST_TARGET"
+
+      - name: Package binary
+        run: |
+          mkdir -p dist
+          tar -C "target/$RUST_TARGET/release" \
+            -czf "dist/eeg-image-${APP_VERSION}-${PLATFORM_NAME}.tar.gz" \
+            eeg-image
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  build_windows:
+    name: Build ${{ matrix.platform }}
+    runs-on: windows-2025
+    needs:
+      - version_check
+      - quality
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            platform: windows-x86_64
+          - target: aarch64-pc-windows-msvc
+            platform: windows-aarch64
+    env:
+      APP_VERSION: ${{ needs.version_check.outputs.app_version }}
+      RUST_TARGET: ${{ matrix.target }}
+      PLATFORM_NAME: ${{ matrix.platform }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust target
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.94.1 --profile minimal
+          rustup target add $env:RUST_TARGET --toolchain 1.94.1
+
+      - name: Build release binary
+        shell: pwsh
+        run: cargo +1.94.1 build --locked --release --target $env:RUST_TARGET
+
+      - name: Package binary
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $archive = "dist/eeg-image-${env:APP_VERSION}-${env:PLATFORM_NAME}.zip"
+          Compress-Archive -Path "target/${env:RUST_TARGET}/release/eeg-image.exe" -DestinationPath $archive -Force
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  build_macos:
+    name: Build macos-aarch64
+    runs-on: macos-15
+    needs:
+      - version_check
+      - quality
+    env:
+      APP_VERSION: ${{ needs.version_check.outputs.app_version }}
+      RUST_TARGET: aarch64-apple-darwin
+      PLATFORM_NAME: macos-aarch64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Verify runner architecture
+        run: test "$(uname -m)" = "arm64"
+
+      - name: Install Rust target
+        run: |
+          rustup toolchain install 1.94.1 --profile minimal
+          rustup target add "$RUST_TARGET" --toolchain 1.94.1
+
+      - name: Build release binary
+        run: cargo +1.94.1 build --locked --release --target "$RUST_TARGET"
+
+      - name: Package binary
+        run: |
+          mkdir -p dist
+          tar -C "target/$RUST_TARGET/release" \
+            -czf "dist/eeg-image-${APP_VERSION}-${PLATFORM_NAME}.tar.gz" \
+            eeg-image
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-macos-aarch64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish_release:
+    name: Publish GitHub release
+    runs-on: ubuntu-24.04
+    needs:
+      - version_check
+      - build_linux
+      - build_windows
+      - build_macos
+    permissions:
+      contents: write
+    env:
+      APP_VERSION: ${{ needs.version_check.outputs.app_version }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Download release archives
+        uses: actions/download-artifact@v7
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        run: |
+          tag="v${APP_VERSION}"
+
+          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber --repo "$GH_REPO"
+          else
+            gh release create "$tag" dist/* \
+              --repo "$GH_REPO" \
+              --target "$GITHUB_SHA" \
+              --title "eeg-image v${APP_VERSION}" \
+              --notes "Автоматическая сборка для Linux, Windows и macOS." \
+              --generate-notes
+          fi

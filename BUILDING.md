@@ -12,17 +12,17 @@
 
 Перед первой сборкой target нужно установить через `rustup target add <target>`. Нативная сборка предпочтительна. Linux ARM64 собирается на ARM64 runner, обе Windows-версии — на Windows x86-64 runner (ARM64 кросс-компиляцией), macOS — на Apple Silicon runner.
 
-Для Windows runner нужны Visual Studio Build Tools с компонентами C++ для x86-64 и ARM64. Для Linux runner нужны системные библиотеки X11/Wayland, перечисленные в `.gitlab-ci.yml`.
+Для Windows runner нужны Visual Studio Build Tools с компонентами C++ для x86-64 и ARM64. Для Linux runner нужны системные библиотеки X11/Wayland, перечисленные в `.github/workflows/release.yml`.
 
-## GitLab Runner
+## GitHub Actions
 
-Pipeline запускается только при push в `main` и ожидает runner-ы с тегами:
+Workflow `.github/workflows/release.yml` запускается при каждом push в `main`. Он использует GitHub-hosted runner-ы:
 
-- `linux-x86-64` — Docker executor на x86-64;
-- `linux-arm64` — Docker executor на ARM64;
-- `windows-x86-64` — Shell executor с PowerShell, Rust и Visual Studio Build Tools;
-- `macos-arm64` — Shell executor на Apple Silicon с Rust и Xcode Command Line Tools.
+- `ubuntu-22.04` для Linux x86-64;
+- `ubuntu-22.04-arm` для Linux ARM64;
+- `windows-2025` для Windows x86-64 и кросс-компиляции Windows ARM64;
+- `macos-15` для macOS ARM64.
 
-Имена тегов можно переопределить переменными GitLab CI/CD `RUNNER_TAG_LINUX_X86_64`, `RUNNER_TAG_LINUX_ARM64`, `RUNNER_TAG_WINDOWS_X86_64` и `RUNNER_TAG_MACOS_ARM64`.
+Workflow сначала проверяет версию, форматирование, тесты и Clippy, затем создаёт пять архивов. После успешной сборки GitHub CLI создаёт тег `v<версия>`, публикует GitHub Release и прикрепляет все архивы. Для release job запрошено минимально необходимое разрешение `contents: write`.
 
-Каждый push в `main` должен повышать `[package].version` в `Cargo.toml`; после изменения нужно обновить `Cargo.lock` командой `cargo check`. Успешный pipeline публикует GitLab Release с тегом `v<версия>` и пятью архивами.
+Каждый push в `main`, кроме первого push в пустой репозиторий, должен повышать `[package].version` в `Cargo.toml`; после изменения нужно обновить `Cargo.lock` командой `cargo check`. Если политика организации запрещает запись через `GITHUB_TOKEN`, разрешите `Read and write permissions` в `Settings → Actions → General → Workflow permissions`.
